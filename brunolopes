@@ -130,3 +130,56 @@ df_freq_compras.groupBy("faixa", "department") \
     .count() \
     .orderBy("faixa", "count", ascending=[True, False]) \
     .display
+
+from pyspark.sql.functions import sum, count, round
+
+# 1. Calcular o total de compras e o total de recompras por produto
+df_reorder_rate = df_compras.groupBy("product_id", "product_name", "department", "aisle") \
+    .agg(
+        count("*").alias("n_compras"),
+        sum("reordered").alias("n_recompras")
+    )
+
+# 2. Calcular a taxa de recompra (reordered rate)
+df_reorder_rate = df_reorder_rate.withColumn(
+    "reordered_rate",
+    round(col("n_recompras") / col("n_compras"), 2)
+)
+
+# 3. Mostrar os produtos mais comprados com maior taxa de recompra
+df_reorder_rate.orderBy(col("n_compras").desc(), col("reordered_rate").desc()).display()
+
+# 4. Analisar taxa de recompra por departamento
+df_reorder_rate.groupBy("department") \
+    .agg(round(avg("reordered_rate"), 2).alias("avg_reordered_rate")) \
+    .orderBy("avg_reordered_rate", ascending=False) \
+    .display()
+
+from pyspark.sql.functions import avg, col, round
+
+# 1. Frequência média de compra por produto
+df_freq_produto = df_compras.groupBy("product_id", "product_name") \
+    .agg(
+        count("*").alias("n_compras"),
+        avg("days_since_prior_order").alias("intervalo_medio")
+    )
+
+# 2. Reorder rate (já feito anteriormente, se não tiver feito, reexecutar este trecho)
+df_reorder = df_compras.groupBy("product_id", "product_name") \
+    .agg(
+        count("*").alias("total_compras"),
+        sum("reordered").alias("recompras")
+    ) \
+    .withColumn("reordered_rate", round(col("recompras") / col("total_compras"), 2))
+
+# 3. Unir dados de frequência com reorder rate
+df_risco = df_freq_produto.join(df_reorder, on=["product_id", "product_name"])
+
+# 4. Criar uma métrica de risco (quanto maior o intervalo e o reorder rate, maior o risco)
+df_risco = df_risco.withColumn(
+    "indice_risco",
+    round(col("reordered_rate") * col("intervalo_medio"), 2)
+)
+
+# 5. Ordenar pelos produtos com maior risco de ruptura
+df_risco.orderBy(col("indice_risco").desc()).display()
