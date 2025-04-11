@@ -130,4 +130,3 @@ df_freq_compras.groupBy("faixa", "department") \
     .count() \
     .orderBy("faixa", "count", ascending=[True, False]) \
     .display
-::contentReference[oaicite:0]{index=0}
