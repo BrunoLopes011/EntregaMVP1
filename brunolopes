@@ -1,0 +1,133 @@
+# Importando bibliotecas e funções necessárias do PySpark
+from pyspark.sql.functions import countDistinct, count, avg, sum, round, col, when, ntile
+from pyspark.sql.window import Window
+
+# Definindo o caminho base para os arquivos CSV
+base_path = "/Volumes/workspace/default/padrão/"
+
+# Lendo os arquivos CSV com cabeçalho
+products = spark.read.option("header", True).csv(base_path + "products.csv")
+orders = spark.read.option("header", True).csv(base_path + "orders.csv")
+order_products_prior = spark.read.option("header", True).csv(base_path + "order_products__prior.csv")
+order_products_train = spark.read.option("header", True).csv(base_path + "order_products__train.csv")
+aisles = spark.read.option("header", True).csv(base_path + "aisles.csv")
+departments = spark.read.option("header", True).csv(base_path + "departments.csv")
+
+# Verificando os esquemas das tabelas
+products.printSchema()
+orders.printSchema()
+order_products_prior.printSchema()
+
+# Visualizando as primeiras 5 linhas de cada DataFrame
+products.show(5)
+orders.show(5)
+order_products_prior.show(5)
+
+# Unindo os dados de produtos com suas categorias (aisles e departments)
+df_produtos_completo = products \
+    .join(aisles, on="aisle_id", how="left") \
+    .join(departments, on="department_id", how="left")
+
+# Unindo os dados de compras anteriores com os pedidos e informações completas dos produtos
+df_compras = order_products_prior \
+    .join(orders, on="order_id", how="left") \
+    .join(df_produtos_completo, on="product_id", how="left")
+
+# Calculando quantas vezes cada usuário comprou cada produto e a posição média no carrinho
+df_user_product = df_compras.groupBy("user_id", "product_id").agg(
+    count("order_id").alias("times_bought"),
+    avg("add_to_cart_order").alias("avg_cart_position")
+)
+
+# Exibindo as primeiras 5 linhas do DataFrame resultante
+df_user_product.show(5)
+
+# Análises Exploratórias Diversas
+
+# Frequência de produtos comprados
+df_compras.groupBy("product_name").count().orderBy("count", ascending=False).show(10)
+
+# Frequência de compras por cliente
+df_compras.groupBy("user_id").count().orderBy("count", ascending=False).show(10)
+
+# Análise de recorrência de produtos (recompras)
+df_compras.groupBy("product_name", "reordered").count().orderBy("count", ascending=False).show(10)
+
+# Número total de pedidos por usuário
+df_compras.groupBy("user_id") \
+    .agg(countDistinct("order_id").alias("n_pedidos")) \
+    .orderBy("n_pedidos", ascending=False) \
+    .show(10)
+
+# Produtos mais comprados
+df_compras.groupBy("product_name") \
+    .count() \
+    .orderBy("count", ascending=False) \
+    .show(10)
+
+# Distribuição de pedidos por dia da semana
+df_compras.groupBy("order_dow") \
+    .count() \
+    .orderBy("order_dow") \
+    .display()
+
+# Estatísticas do intervalo entre pedidos
+df_compras.select("days_since_prior_order") \
+    .describe() \
+    .display()
+
+# Distribuição de pedidos por hora do dia
+df_compras.groupBy("order_hour_of_day") \
+    .count() \
+    .orderBy("order_hour_of_day") \
+    .display()
+# Análise de Frequência de Compra por Produto
+
+# Contando a frequência de compra de cada produto
+frequencia_produtos = df_compras.groupBy("product_id", "product_name") \
+    .count() \
+    .withColumnRenamed("count", "frequencia_compras") \
+    .orderBy(col("frequencia_compras").desc())
+
+# Exibindo os 20 produtos mais comprados
+frequencia_produtos.show(20, truncate=False)
+
+# Classificação de Produtos por Nível de Risco com Base na Frequência de Compra
+
+# Adicionando coluna de ranking com ntile para dividir os produtos em 20 grupos
+frequencia_produtos_risco = frequencia_produtos.withColumn(
+    "risco_frequencia",
+    ntile(20).over(Window.orderBy(col("frequencia_compras").desc()))
+)
+
+# Traduzindo os grupos em etiquetas de risco
+frequencia_produtos_risco = frequencia_produtos_risco.withColumn(
+    "nivel_risco",
+    when(col("risco_frequencia") <= 1, "ALTO")
+    .when(col("risco_frequencia") <= 4, "MÉDIO")
+    .otherwise("BAIXO")
+)
+
+# Exibindo os 20 produtos com seus níveis de risco
+frequencia_produtos_risco.select("product_name", "frequencia_compras", "nivel_risco").show(20, truncate=False)
+
+# Calculando a frequência de compra por produto, incluindo departamento e corredor
+df_frequencia = df_compras.groupBy("product_id", "product_name", "department", "aisle") \
+    .count() \
+    .withColumnRenamed("count", "frequencia")
+
+# Criando faixas de frequência (binning)
+df_freq_compras = df_frequencia.withColumn(
+    "faixa",
+    when(col("frequencia") <= 50, "0-50")
+    .when((col("frequencia") > 50) & (col("frequencia") <= 100), "51-100")
+    .when((col("frequencia") > 100) & (col("frequencia") <= 500), "101-500")
+    .otherwise("500+")
+)
+
+# Análise: distribuição por faixa e departamento
+df_freq_compras.groupBy("faixa", "department") \
+    .count() \
+    .orderBy("faixa", "count", ascending=[True, False]) \
+    .display
+::contentReference[oaicite:0]{index=0}
